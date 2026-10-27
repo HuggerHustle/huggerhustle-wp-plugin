@@ -67,8 +67,19 @@ function wpSoft(...args) {
   }
 }
 
+/**
+ * The evaluated output, without wp-env's chatter.
+ *
+ * Filtering by the banner's own marks, not by line position: a short answer can
+ * arrive on the same line as the "Ran" footer, and slicing by index then ate it —
+ * which made a successful campaign creation look like a failure.
+ */
 function wpEval(code) {
-  return wp("eval", code).split("\n").slice(1, -1).join("\n").trim();
+  return wp("eval", code)
+    .split("\n")
+    .filter((line) => !/^[ℹ✔✖]/.test(line.trim()) && line.trim() !== "")
+    .join("\n")
+    .trim();
 }
 
 function renderAdmin() {
