@@ -1,0 +1,41 @@
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Everything runs inside the wp-env containers: the PHP that matters is
+      # the one WordPress runs, so nothing PHP is installed on the runner.
+      - name: Start WordPress
+        run: npx wp-env start
+
+      - name: Syntax, then end-to-end
+        run: pnpm test
+
+      - name: WordPress plugin check
+        run: |
+          npx wp-env run cli wp plugin install plugin-check --activate
+          npx wp-env run cli wp plugin check huggerhustle-wp-plugin --ignore-codes=readme_parser_warnings
+
+      - name: Stop WordPress
+        if: always()
+        run: npx wp-env stop

@@ -1,0 +1,20 @@
+{
+	"name": "huggerhustle-wp-plugin",
+	"version": "0.1.0",
+	"private": true,
+	"description": "HuggerHustle for WordPress: find and reach the businesses that should be your customers, from your own site's dashboard.",
+	"license": "GPL-2.0-or-later",
+	"type": "module",
+	"scripts": {
+		"env:start": "wp-env start",
+		"env:stop": "wp-env stop",
+		"env:clean": "wp-env clean all",
+		"test": "node tests/e2e.mjs",
+		"test:lint": "node tests/lint.mjs",
+		"package": "node scripts/package.mjs",
+		"fake-api": "node tests/fake-api.mjs"
+	},
+	"devDependencies": {
+		"@wordpress/env": "^10.25.0"
+	}
+}

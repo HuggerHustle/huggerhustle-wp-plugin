@@ -1,0 +1,8 @@
+node_modules/
+vendor/
+*.zip
+.wp-env-home/
+wp-env-home/
+logs/
+.DS_Store
+dist/
