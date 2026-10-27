@@ -167,7 +167,8 @@ async function main() {
     const dashboard = renderAdmin();
     check(
       "the balance is shown",
-      dashboard.includes("42 introductions left"),
+      dashboard.includes("42 introductions left in your trial") &&
+        dashboard.includes("1 free meeting left"),
       dashboard.slice(0, 600),
     );
     check("the campaign is listed", dashboard.includes("Acme Dental"));

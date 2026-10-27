@@ -10,6 +10,7 @@
 		"env:stop": "wp-env stop",
 		"env:clean": "wp-env clean all",
 		"test": "node tests/e2e.mjs",
+		"test:live": "node tests/e2e-live.mjs",
 		"test:lint": "node tests/lint.mjs",
 		"package": "node scripts/package.mjs",
 		"fake-api": "node tests/fake-api.mjs"

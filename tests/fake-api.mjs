@@ -102,13 +102,17 @@ const server = createServer(async (req, res) => {
     return fail(res, 429, "rate_limited", "API key rate limit exceeded (60 requests per minute). Wait before retrying.");
 
   if (req.method === "GET" && path === "/api/v1/balance")
+    // The real shape: everything under `credits`, and `available` is free
+    // meetings while `trialEmailsLeft` is the introductions.
     return send(res, 200, {
-      available: 42,
-      trialEmailsLeft: null,
-      subscription: null,
-      freeMeetings: 1,
-      meetingsBooked: 0,
-      children: [],
+      credits: {
+        available: 1,
+        used: 2,
+        totalGranted: 3,
+        trialEmailsLeft: 42,
+        freeSends: false,
+        subscription: null,
+      },
     });
 
   if (req.method === "GET" && path === "/api/v1/campaigns")

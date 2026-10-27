@@ -149,20 +149,35 @@ class HuggerHustle_Admin {
 			self::render_error( $balance );
 			return;
 		}
-		$available = isset( $balance['available'] ) && null !== $balance['available']
-			? (int) $balance['available']
-			: null;
-		echo '<p>';
-		if ( null === $available ) {
-			echo esc_html__( 'Your email balance is unlimited on this plan.', 'huggerhustle' );
+		// The API nests these under `credits`, and they mean different things:
+		// `trialEmailsLeft` is the introductions left, `available` the free
+		// meetings. Showing one as the other would be a lie the owner acts on.
+		$credits  = isset( $balance['credits'] ) && is_array( $balance['credits'] ) ? $balance['credits'] : array();
+		$emails   = isset( $credits['trialEmailsLeft'] ) ? $credits['trialEmailsLeft'] : null;
+		$meetings = isset( $credits['available'] ) ? $credits['available'] : null;
+		$free     = ! empty( $credits['freeSends'] );
+
+		if ( $free ) {
+			$line = __( 'Sending is free on this account.', 'huggerhustle' );
+		} elseif ( null === $emails ) {
+			$line = __( 'Unlimited introductions on this plan.', 'huggerhustle' );
 		} else {
-			printf(
-				/* translators: %d: number of introductions left. */
-				esc_html( _n( '%d introduction left.', '%d introductions left.', $available, 'huggerhustle' ) ),
-				(int) $available
+			$line = sprintf(
+				/* translators: %d: introductions left in the trial. */
+				_n( '%d introduction left in your trial.', '%d introductions left in your trial.', (int) $emails, 'huggerhustle' ),
+				(int) $emails
 			);
 		}
-		echo ' <a href="https://huggerhustle.com/balance" target="_blank" rel="noopener noreferrer">'
+		if ( ! $free && null !== $meetings ) {
+			$line .= ' ' . sprintf(
+				/* translators: %d: free meetings left. */
+				_n( '%d free meeting left.', '%d free meetings left.', (int) $meetings, 'huggerhustle' ),
+				(int) $meetings
+			);
+		}
+
+		echo '<p>' . esc_html( $line );
+		echo ' <a href="' . esc_url( 'https://huggerhustle.com/billing' ) . '" target="_blank" rel="noopener noreferrer">'
 			. esc_html__( 'Your balance', 'huggerhustle' )
 			. '</a></p>';
 	}
