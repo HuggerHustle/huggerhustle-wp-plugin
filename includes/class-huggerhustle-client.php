@@ -142,6 +142,88 @@ class HuggerHustle_Client {
 	}
 
 	/**
+	 * Approve every business that is ready to contact, in one request.
+	 *
+	 * Approving them one at a time spends one request each against the key's 60 a
+	 * minute, so a campaign with a page of ready businesses runs out partway
+	 * through the list. The API answers `{ approved: n }`, and approving nothing
+	 * is not an authorization: it starts sending only once something moved.
+	 *
+	 * @param string $campaign_id Campaign id.
+	 * @return array|WP_Error
+	 */
+	public function approve_all( $campaign_id ) {
+		return $this->request(
+			'POST',
+			'/campaigns/' . rawurlencode( $campaign_id ) . '/prospects',
+			array( 'action' => 'approve-all-ready' ),
+			true
+		);
+	}
+
+	/**
+	 * Change some of a campaign's business details.
+	 *
+	 * Only what is sent is written: the API merges the rest over what it stores,
+	 * so a form that fills one empty field does not blank every other one. A
+	 * campaign held at `needs-details` starts reading the business again with the
+	 * new details, which is why this is how a held campaign is repaired.
+	 *
+	 * @param string $campaign_id Campaign id.
+	 * @param array  $changes     Any of businessName, whatYouDo, currentOffer,
+	 *                            idealBuyer, geography, objective, meetingEmail.
+	 * @return array|WP_Error `{ id, status }`.
+	 */
+	public function update_details( $campaign_id, array $changes ) {
+		return $this->request(
+			'PATCH',
+			'/campaigns/' . rawurlencode( $campaign_id ),
+			$changes,
+			true
+		);
+	}
+
+	/**
+	 * Replace a campaign's sources: its website, its description, its documents.
+	 *
+	 * Destructive on HuggerHustle's side, and the screen says so before the
+	 * button: every business not yet sent is dropped and research starts over
+	 * with the new sources.
+	 *
+	 * @param string $campaign_id Campaign id.
+	 * @param array  $body        `website`, `explanation`, `documents`.
+	 * @return array|WP_Error `{ id, status }`.
+	 */
+	public function set_sources( $campaign_id, array $body ) {
+		return $this->request(
+			'PUT',
+			'/campaigns/' . rawurlencode( $campaign_id ) . '/sources',
+			$body,
+			true
+		);
+	}
+
+	/**
+	 * Stop, resume, retry or continue a campaign.
+	 *
+	 * The API answers `409` when the campaign is not in the state the action
+	 * moves (a `stop` on a paused campaign, a `resume` on a running one), so the
+	 * screen can report a refusal instead of a change that never happened.
+	 *
+	 * @param string $campaign_id Campaign id.
+	 * @param string $action      `stop`, `resume`, `retry` or `continue-anyway`.
+	 * @return array|WP_Error `{ id, status }`.
+	 */
+	public function act( $campaign_id, $action ) {
+		return $this->request(
+			'POST',
+			'/campaigns/' . rawurlencode( $campaign_id ) . '/actions',
+			array( 'action' => $action ),
+			true
+		);
+	}
+
+	/**
 	 * One request, with the key, the timeout, the cache and the error envelope.
 	 *
 	 * @param string $method  HTTP method.

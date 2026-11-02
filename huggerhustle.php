@@ -3,7 +3,7 @@
  * Plugin Name:       HuggerHustle
  * Plugin URI:        https://huggerhustle.com
  * Description:       Find the businesses that should be your customers, read the introduction written for each of them, and approve the ones you want sent — from your own site's dashboard.
- * Version:           0.1.0
+ * Version:           0.2.0
  * Requires at least: 6.5
  * Requires PHP:      7.4
  * Author:            HuggerHustle
@@ -17,7 +17,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'HUGGERHUSTLE_VERSION', '0.1.0' );
+define( 'HUGGERHUSTLE_VERSION', '0.2.0' );
 define( 'HUGGERHUSTLE_PLUGIN_FILE', __FILE__ );
 define( 'HUGGERHUSTLE_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'HUGGERHUSTLE_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -47,5 +47,9 @@ function huggerhustle_client() {
 add_action( 'admin_menu', array( 'HuggerHustle_Admin', 'menu' ) );
 add_action( 'admin_init', array( 'HuggerHustle_Settings', 'register' ) );
 add_action( 'admin_post_huggerhustle_approve', array( 'HuggerHustle_Admin', 'handle_approve' ) );
+add_action( 'admin_post_huggerhustle_approve_all', array( 'HuggerHustle_Admin', 'handle_approve_all' ) );
+add_action( 'admin_post_huggerhustle_details', array( 'HuggerHustle_Admin', 'handle_details' ) );
+add_action( 'admin_post_huggerhustle_sources', array( 'HuggerHustle_Admin', 'handle_sources' ) );
+add_action( 'admin_post_huggerhustle_act', array( 'HuggerHustle_Admin', 'handle_act' ) );
 add_action( 'admin_post_huggerhustle_start', array( 'HuggerHustle_Admin', 'handle_start' ) );
 add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), array( 'HuggerHustle_Settings', 'action_links' ) );

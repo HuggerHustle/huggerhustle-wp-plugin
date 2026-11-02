@@ -74,6 +74,11 @@ const drafts = {
 
 const approved = new Set();
 
+/** Test-only: `?status=` on the control path puts the campaign in another state. */
+function setStatus(value) {
+  campaigns[0].status = value;
+}
+
 function send(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -94,6 +99,13 @@ const server = createServer(async (req, res) => {
 
   // Every request is logged so an e2e can assert what the plugin asked for.
   console.log(`${req.method} ${url.pathname}${url.search}`);
+
+  // Test-only control path, before the key check: the screens differ by status,
+  // and a test has to be able to ask for a held or a running campaign.
+  if (path === "/__status") {
+    setStatus(url.searchParams.get("value") ?? "review");
+    return send(res, 200, { status: campaigns[0].status });
+  }
 
   if (!req.headers.authorization?.startsWith("Bearer hh_"))
     return fail(res, 401, "sign_in_required", "Please sign in or provide an Authorization: Bearer hh_... API key.");
@@ -134,6 +146,29 @@ const server = createServer(async (req, res) => {
     const status = url.searchParams.get("status");
     const items = status ? prospects.filter((p) => p.status === status) : prospects;
     return send(res, 200, { items, nextCursor: null, total: items.length });
+  }
+
+  if (req.method === "POST" && listMatch) {
+    if (!["review", "researching", "active"].includes(campaigns[0].status))
+      return fail(res, 409, "conflict", `A ${campaigns[0].status} campaign cannot take approvals.`);
+
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    let parsed = {};
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return fail(res, 400, "bad_request", "Request body must be valid JSON.");
+    }
+    if (parsed.action !== "approve-all-ready")
+      return fail(res, 422, "validation_error", "action: Invalid option", {
+        fields: { action: "Invalid option" },
+      });
+
+    const ready = prospects.filter((p) => p.status === "draft");
+    for (const prospect of ready) approved.add(prospect.id);
+    console.log(`APPROVE_ALL ${ready.length}`);
+    return send(res, 200, { approved: ready.length });
   }
 
   const oneMatch = path.match(/^\/api\/v1\/campaigns\/([^/]+)\/prospects\/([^/]+)$/);
@@ -181,6 +216,73 @@ const server = createServer(async (req, res) => {
         approved: parsed.approved,
       });
     }
+  }
+
+  // PATCH /campaigns/{id}: the details a held campaign is repaired with. Only
+  // the fields the caller sent are written, exactly like the real API.
+  if (req.method === "PATCH" && campaignMatch) {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    let parsed = {};
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return fail(res, 400, "bad_request", "Request body must be valid JSON.");
+    }
+    if (Object.keys(parsed).length === 0)
+      return fail(res, 422, "validation_error", "Send at least one field to change.");
+    console.log(`PATCH ${JSON.stringify(parsed)}`);
+    return send(res, 200, { id: campaignMatch[1], status: campaigns[0].status });
+  }
+
+  // PUT /campaigns/{id}/sources: destructive on the real API, and the empty
+  // body is refused in the settings screen's own words.
+  const sourcesMatch = path.match(/^\/api\/v1\/campaigns\/([^/]+)\/sources$/);
+  if (req.method === "PUT" && sourcesMatch) {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    let parsed = {};
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return fail(res, 400, "bad_request", "Request body must be valid JSON.");
+    }
+    const documents = Array.isArray(parsed.documents) ? parsed.documents : [];
+    if (!parsed.website && !parsed.explanation && documents.length === 0)
+      return fail(res, 422, "invalid_input", "Add a website, a file, or a few sentences about your business.");
+    console.log(`SOURCES ${JSON.stringify(parsed)}`);
+    campaigns[0].status = "researching";
+    return send(res, 200, { id: sourcesMatch[1], status: "researching" });
+  }
+
+  // POST /campaigns/{id}/actions: one action, and a 409 when the campaign is
+  // not in the state it moves.
+  const actionsMatch = path.match(/^\/api\/v1\/campaigns\/([^/]+)\/actions$/);
+  if (req.method === "POST" && actionsMatch) {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    let parsed = {};
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return fail(res, 400, "bad_request", "Request body must be valid JSON.");
+    }
+    const action = parsed.action;
+    if (!["stop", "resume", "retry", "continue-anyway"].includes(action))
+      return fail(res, 422, "validation_error", "action: Invalid option", {
+        fields: { action: "Invalid option" },
+      });
+
+    const running = ["researching", "active"].includes(campaigns[0].status);
+    if ("stop" === action && !running)
+      return fail(res, 409, "conflict", "Only a running campaign can be stopped.");
+    if ("resume" === action && "paused" !== campaigns[0].status)
+      return fail(res, 409, "conflict", "Only a paused campaign can be resumed.");
+
+    const next = "stop" === action ? "paused" : "resume" === action ? "researching" : campaigns[0].status;
+    campaigns[0].status = next;
+    console.log(`ACT ${action}`);
+    return send(res, 200, { id: actionsMatch[1], status: next });
   }
 
   if (req.method === "POST" && path === "/api/v1/campaigns") {
