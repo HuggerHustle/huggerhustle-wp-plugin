@@ -13,7 +13,28 @@ import { join, relative } from "node:path";
 const ROOT = new URL("..", import.meta.url).pathname;
 // The directory this repo is mounted as inside WordPress; wp-env names it after
 // the repository, while the release zip ships as `huggerhustle/`.
-const SLUG = process.argv[2] ?? "huggerhustle";
+const SLUG = process.argv[2] ?? mountedSlug();
+
+/** The plugin directory WordPress actually has, so `pnpm test:lint` works with
+ * no argument: the packaged slug is not mounted while the repository is. */
+function mountedSlug() {
+  // The checkout first: it is what this repo mounts, and an installed copy of
+  // the release zip may sit beside it under the packaged slug.
+  const candidates = [ROOT.replace(/\/$/, "").split("/").pop(), "huggerhustle"];
+  for (const slug of candidates) {
+    try {
+      execFileSync(
+        "npx",
+        ["wp-env", "run", "cli", "test", "-d", `wp-content/plugins/${slug}`],
+        { cwd: ROOT, stdio: "pipe" },
+      );
+      return slug;
+    } catch {
+      // not mounted under that name
+    }
+  }
+  return candidates[0];
+}
 
 function phpFiles(dir, found = []) {
   for (const entry of readdirSync(dir)) {
