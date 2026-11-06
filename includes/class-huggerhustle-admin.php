@@ -251,9 +251,21 @@ class HuggerHustle_Admin {
 
 		// One call for the whole page: approving them one by one costs one
 		// request each against the key's 60 a minute.
+		// The campaign's own ready count, not the number on this page: the list is
+		// one page of the campaign, and the button approves the whole campaign.
+		$counts  = isset( $campaign['counts'] ) && is_array( $campaign['counts'] ) ? $campaign['counts'] : array();
+		$ready   = isset( $counts['ready'] ) ? (int) $counts['ready'] : count( $items );
+		$shown   = count( $items );
 		echo '<p>';
-		self::approve_all_form( $campaign_id, count( $items ) );
-		echo ' <span class="description">' . esc_html__( 'Reads nothing for you: every business listed above goes out with the next batch.', 'huggerhustle' ) . '</span></p>';
+		self::approve_all_form( $campaign_id, $ready );
+		echo ' <span class="description">';
+		printf(
+			/* translators: 1: how many businesses are listed on this page, 2: how many are ready in the campaign. */
+			esc_html__( 'Approves every ready business in this campaign, not only the %1$d listed here (%2$d ready). Read as many introductions as you need first: they all go out with the next batch.', 'huggerhustle' ),
+			(int) $shown,
+			(int) $ready
+		);
+		echo '</span></p>';
 
 		echo '<table class="widefat striped"><thead><tr>';
 		echo '<th>' . esc_html__( 'Business', 'huggerhustle' ) . '</th>';
@@ -640,10 +652,13 @@ class HuggerHustle_Admin {
 		$explanation = isset( $_POST['explanation'] ) ? sanitize_textarea_field( wp_unslash( $_POST['explanation'] ) ) : '';
 		$send_pages  = ! empty( $_POST['send_pages'] );
 
+		// A website the owner cleared is sent cleared: the form already prefills
+		// this site's address, so an empty input means "no website", and putting
+		// it back here would make a description-only reset impossible.
 		$result = huggerhustle_client()->set_sources(
 			$campaign,
 			array(
-				'website'     => '' === $posted ? self::site_url() : $posted,
+				'website'     => $posted,
 				'explanation' => $explanation,
 				'documents'   => $send_pages ? self::published_pages() : array(),
 			)

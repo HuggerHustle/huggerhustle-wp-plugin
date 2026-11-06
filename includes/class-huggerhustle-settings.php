@@ -74,7 +74,9 @@ class HuggerHustle_Settings {
 			);
 			return (string) get_option( self::OPTION_API_KEY, '' );
 		}
-		delete_transient( 'huggerhustle_' . md5( 'GET /balance' ) );
+		// Every cached read belongs to the key that made it: a saved key must
+		// not show the previous account's balance for a minute.
+		HuggerHustle_Client::flush_cache();
 		return $key;
 	}
 
@@ -101,6 +103,7 @@ class HuggerHustle_Settings {
 			);
 			return self::DEFAULT_API_URL;
 		}
+		HuggerHustle_Client::flush_cache();
 		return $url;
 	}
 

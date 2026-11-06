@@ -18,6 +18,7 @@ const PORT = Number(process.argv[2] ?? process.env.FAKE_API_PORT ?? 4010);
 
 const CAMPAIGN_ID = "c0000000-0000-4000-8000-000000000001";
 const PROSPECT_READY = "p0000000-0000-4000-8000-000000000001";
+const PROSPECT_READY_2 = "p0000000-0000-4000-8000-000000000003";
 const PROSPECT_HELD = "p0000000-0000-4000-8000-000000000002";
 
 const campaigns = [
@@ -42,6 +43,18 @@ const prospects = [
     company: "Northwind Dental",
     domain: "northwind.example",
     line: "A four-chair practice adding a second location.",
+    sentAt: null,
+    replyStatus: "none",
+    booked: false,
+    sending: null,
+  },
+  {
+    id: PROSPECT_READY_2,
+    status: "draft",
+    category: "timed-fit",
+    company: "Bracket Street Cafe",
+    domain: "bracket-street.example",
+    line: "Opening a second room this spring.",
     sentAt: null,
     replyStatus: "none",
     booked: false,
@@ -73,6 +86,19 @@ const drafts = {
 };
 
 const approved = new Set();
+
+/** The counts a real campaign would report, from the rows themselves. */
+function liveCounts() {
+  return {
+    found: prospects.length,
+    ready: prospects.filter((p) => p.status === "draft").length,
+    approved: prospects.filter((p) => p.status === "approved").length,
+    sent: 0,
+    held: prospects.filter((p) => p.status === "held").length,
+    replied: 0,
+    booked: 0,
+  };
+}
 
 /** Test-only: `?status=` on the control path puts the campaign in another state. */
 function setStatus(value) {
@@ -127,14 +153,16 @@ const server = createServer(async (req, res) => {
       },
     });
 
-  if (req.method === "GET" && path === "/api/v1/campaigns")
-    return send(res, 200, { items: campaigns, nextCursor: null, total: campaigns.length });
+  if (req.method === "GET" && path === "/api/v1/campaigns") {
+    const items = campaigns.map((campaign) => ({ ...campaign, counts: liveCounts() }));
+    return send(res, 200, { items, nextCursor: null, total: items.length });
+  }
 
   const campaignMatch = path.match(/^\/api\/v1\/campaigns\/([^/]+)$/);
   if (req.method === "GET" && campaignMatch)
     return send(res, 200, {
       ...campaigns[0],
-      counts: { found: 2, ready: 1, approved: approved.size, sent: 0, held: 1, replied: 0, booked: 0 },
+      counts: liveCounts(),
       researchNote: null,
       error: null,
       pausedReason: null,
@@ -166,7 +194,10 @@ const server = createServer(async (req, res) => {
       });
 
     const ready = prospects.filter((p) => p.status === "draft");
-    for (const prospect of ready) approved.add(prospect.id);
+    for (const prospect of ready) {
+      prospect.status = "approved";
+      approved.add(prospect.id);
+    }
     console.log(`APPROVE_ALL ${ready.length}`);
     return send(res, 200, { approved: ready.length });
   }
@@ -208,8 +239,13 @@ const server = createServer(async (req, res) => {
         return fail(res, 422, "validation_error", "approved: Expected boolean", {
           fields: { approved: "Expected boolean" },
         });
-      if (parsed.approved) approved.add(prospect.id);
-      else approved.delete(prospect.id);
+      if (parsed.approved) {
+        prospect.status = "approved";
+        approved.add(prospect.id);
+      } else {
+        prospect.status = "draft";
+        approved.delete(prospect.id);
+      }
       return send(res, 200, {
         id: prospect.id,
         status: parsed.approved ? "approved" : "draft",

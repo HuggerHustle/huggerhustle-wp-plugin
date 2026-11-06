@@ -282,8 +282,30 @@ class HuggerHustle_Client {
 
 		if ( ! $write ) {
 			set_transient( $cache_key, $json, self::CACHE_TTL );
+			return $json;
 		}
+
+		// A write makes the reads that came before it wrong: without this, the
+		// screen a redirect lands on still shows the campaign as running (and
+		// offers Stop) for up to a minute after it was stopped. The keys are
+		// hashes of request paths, so they cannot be listed one by one.
+		self::flush_cache();
 		return $json;
+	}
+
+	/**
+	 * Delete every cached read this plugin holds.
+	 *
+	 * Public because changing the key or the address in settings invalidates the
+	 * same reads: without that, a saved key would show the previous account's
+	 * balance for a minute.
+	 */
+	public static function flush_cache() {
+		global $wpdb;
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$wpdb->query(
+			"DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_huggerhustle_%' OR option_name LIKE '_transient_timeout_huggerhustle_%'"
+		);
 	}
 
 	/**

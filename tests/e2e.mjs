@@ -326,6 +326,15 @@ async function main() {
       stopped.includes("OK paused"),
       stopped.slice(0, 300),
     );
+    // The write must invalidate the cached reads: no clearCache() here, and the
+    // screen still has to catch up or the owner sees Stop on a stopped campaign.
+    const afterStop = renderAdmin();
+    check(
+      "a write clears the reads it made wrong",
+      afterStop.includes('value="resume"') && !afterStop.includes('value="stop"'),
+      afterStop.slice(0, 600),
+    );
+
     check(
       "a stop the API refuses reaches the screen in its own words",
       wpEval(
