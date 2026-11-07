@@ -4,7 +4,7 @@ Tags: leads, prospecting, outreach, email, b2b
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.1.0
+Stable tag: 0.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -22,6 +22,8 @@ Nothing is sent by this plugin. It talks to your HuggerHustle account, which doe
 * Starts a campaign from this site's address, name and published pages.
 * Shows your email balance, your campaigns, and the businesses waiting for approval.
 * Shows the introduction written for each business, so you approve words you have read.
+* Approves every ready business in one click, and stops, resumes or retries a campaign.
+* Repairs a campaign that stopped because it could not read your business, and changes what it reads.
 
 **What it does not do**
 
@@ -39,7 +41,9 @@ Nothing is sent until you save an API key. With no key the plugin makes no reque
 
 * Your API key, in an `Authorization: Bearer` header, on every request.
 * When you press **Find businesses for this site**: this site's address, its name, and the text of up to five published pages or products.
-* When you approve a business or open the dashboard: only the campaign and business identifiers being read or changed.
+* When you press **Use these sources**, and tick its box: the website and description you typed, and the text of up to five published pages or products.
+* When you press **Save and read again**: only the fields you filled in.
+* When you approve a business, approve all of them, or stop/resume/retry a campaign, or open the dashboard: only the campaign and business identifiers being read or changed.
 
 **Where it goes**
 
@@ -82,6 +86,12 @@ Activate it per site. Each site keeps its own key, so each site's campaigns stay
 3. Settings: the API key.
 
 == Changelog ==
+
+= 0.2.0 =
+* Approve every business that is ready in one click, instead of one at a time.
+* Stop, resume or retry a campaign without leaving wp-admin.
+* Repair a campaign that stopped because it could not read your business: fill what it missed and it reads your site again.
+* Change what a campaign reads — its website, a description, and this site's pages — and start its research over with them.
 
 = 0.1.0 =
 * First version: connect a site, start a campaign from it, and approve the businesses waiting for you.

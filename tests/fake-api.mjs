@@ -18,6 +18,7 @@ const PORT = Number(process.argv[2] ?? process.env.FAKE_API_PORT ?? 4010);
 
 const CAMPAIGN_ID = "c0000000-0000-4000-8000-000000000001";
 const PROSPECT_READY = "p0000000-0000-4000-8000-000000000001";
+const PROSPECT_READY_2 = "p0000000-0000-4000-8000-000000000003";
 const PROSPECT_HELD = "p0000000-0000-4000-8000-000000000002";
 
 const campaigns = [
@@ -42,6 +43,18 @@ const prospects = [
     company: "Northwind Dental",
     domain: "northwind.example",
     line: "A four-chair practice adding a second location.",
+    sentAt: null,
+    replyStatus: "none",
+    booked: false,
+    sending: null,
+  },
+  {
+    id: PROSPECT_READY_2,
+    status: "draft",
+    category: "timed-fit",
+    company: "Bracket Street Cafe",
+    domain: "bracket-street.example",
+    line: "Opening a second room this spring.",
     sentAt: null,
     replyStatus: "none",
     booked: false,
@@ -74,6 +87,24 @@ const drafts = {
 
 const approved = new Set();
 
+/** The counts a real campaign would report, from the rows themselves. */
+function liveCounts() {
+  return {
+    found: prospects.length,
+    ready: prospects.filter((p) => p.status === "draft").length,
+    approved: prospects.filter((p) => p.status === "approved").length,
+    sent: 0,
+    held: prospects.filter((p) => p.status === "held").length,
+    replied: 0,
+    booked: 0,
+  };
+}
+
+/** Test-only: `?status=` on the control path puts the campaign in another state. */
+function setStatus(value) {
+  campaigns[0].status = value;
+}
+
 function send(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -95,6 +126,13 @@ const server = createServer(async (req, res) => {
   // Every request is logged so an e2e can assert what the plugin asked for.
   console.log(`${req.method} ${url.pathname}${url.search}`);
 
+  // Test-only control path, before the key check: the screens differ by status,
+  // and a test has to be able to ask for a held or a running campaign.
+  if (path === "/__status") {
+    setStatus(url.searchParams.get("value") ?? "review");
+    return send(res, 200, { status: campaigns[0].status });
+  }
+
   if (!req.headers.authorization?.startsWith("Bearer hh_"))
     return fail(res, 401, "sign_in_required", "Please sign in or provide an Authorization: Bearer hh_... API key.");
 
@@ -115,14 +153,16 @@ const server = createServer(async (req, res) => {
       },
     });
 
-  if (req.method === "GET" && path === "/api/v1/campaigns")
-    return send(res, 200, { items: campaigns, nextCursor: null, total: campaigns.length });
+  if (req.method === "GET" && path === "/api/v1/campaigns") {
+    const items = campaigns.map((campaign) => ({ ...campaign, counts: liveCounts() }));
+    return send(res, 200, { items, nextCursor: null, total: items.length });
+  }
 
   const campaignMatch = path.match(/^\/api\/v1\/campaigns\/([^/]+)$/);
   if (req.method === "GET" && campaignMatch)
     return send(res, 200, {
       ...campaigns[0],
-      counts: { found: 2, ready: 1, approved: approved.size, sent: 0, held: 1, replied: 0, booked: 0 },
+      counts: liveCounts(),
       researchNote: null,
       error: null,
       pausedReason: null,
@@ -134,6 +174,32 @@ const server = createServer(async (req, res) => {
     const status = url.searchParams.get("status");
     const items = status ? prospects.filter((p) => p.status === status) : prospects;
     return send(res, 200, { items, nextCursor: null, total: items.length });
+  }
+
+  if (req.method === "POST" && listMatch) {
+    if (!["review", "researching", "active"].includes(campaigns[0].status))
+      return fail(res, 409, "conflict", `A ${campaigns[0].status} campaign cannot take approvals.`);
+
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    let parsed = {};
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return fail(res, 400, "bad_request", "Request body must be valid JSON.");
+    }
+    if (parsed.action !== "approve-all-ready")
+      return fail(res, 422, "validation_error", "action: Invalid option", {
+        fields: { action: "Invalid option" },
+      });
+
+    const ready = prospects.filter((p) => p.status === "draft");
+    for (const prospect of ready) {
+      prospect.status = "approved";
+      approved.add(prospect.id);
+    }
+    console.log(`APPROVE_ALL ${ready.length}`);
+    return send(res, 200, { approved: ready.length });
   }
 
   const oneMatch = path.match(/^\/api\/v1\/campaigns\/([^/]+)\/prospects\/([^/]+)$/);
@@ -173,14 +239,86 @@ const server = createServer(async (req, res) => {
         return fail(res, 422, "validation_error", "approved: Expected boolean", {
           fields: { approved: "Expected boolean" },
         });
-      if (parsed.approved) approved.add(prospect.id);
-      else approved.delete(prospect.id);
+      if (parsed.approved) {
+        prospect.status = "approved";
+        approved.add(prospect.id);
+      } else {
+        prospect.status = "draft";
+        approved.delete(prospect.id);
+      }
       return send(res, 200, {
         id: prospect.id,
         status: parsed.approved ? "approved" : "draft",
         approved: parsed.approved,
       });
     }
+  }
+
+  // PATCH /campaigns/{id}: the details a held campaign is repaired with. Only
+  // the fields the caller sent are written, exactly like the real API.
+  if (req.method === "PATCH" && campaignMatch) {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    let parsed = {};
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return fail(res, 400, "bad_request", "Request body must be valid JSON.");
+    }
+    if (Object.keys(parsed).length === 0)
+      return fail(res, 422, "validation_error", "Send at least one field to change.");
+    console.log(`PATCH ${JSON.stringify(parsed)}`);
+    return send(res, 200, { id: campaignMatch[1], status: campaigns[0].status });
+  }
+
+  // PUT /campaigns/{id}/sources: destructive on the real API, and the empty
+  // body is refused in the settings screen's own words.
+  const sourcesMatch = path.match(/^\/api\/v1\/campaigns\/([^/]+)\/sources$/);
+  if (req.method === "PUT" && sourcesMatch) {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    let parsed = {};
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return fail(res, 400, "bad_request", "Request body must be valid JSON.");
+    }
+    const documents = Array.isArray(parsed.documents) ? parsed.documents : [];
+    if (!parsed.website && !parsed.explanation && documents.length === 0)
+      return fail(res, 422, "invalid_input", "Add a website, a file, or a few sentences about your business.");
+    console.log(`SOURCES ${JSON.stringify(parsed)}`);
+    campaigns[0].status = "researching";
+    return send(res, 200, { id: sourcesMatch[1], status: "researching" });
+  }
+
+  // POST /campaigns/{id}/actions: one action, and a 409 when the campaign is
+  // not in the state it moves.
+  const actionsMatch = path.match(/^\/api\/v1\/campaigns\/([^/]+)\/actions$/);
+  if (req.method === "POST" && actionsMatch) {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    let parsed = {};
+    try {
+      parsed = JSON.parse(body || "{}");
+    } catch {
+      return fail(res, 400, "bad_request", "Request body must be valid JSON.");
+    }
+    const action = parsed.action;
+    if (!["stop", "resume", "retry", "continue-anyway"].includes(action))
+      return fail(res, 422, "validation_error", "action: Invalid option", {
+        fields: { action: "Invalid option" },
+      });
+
+    const running = ["researching", "active"].includes(campaigns[0].status);
+    if ("stop" === action && !running)
+      return fail(res, 409, "conflict", "Only a running campaign can be stopped.");
+    if ("resume" === action && "paused" !== campaigns[0].status)
+      return fail(res, 409, "conflict", "Only a paused campaign can be resumed.");
+
+    const next = "stop" === action ? "paused" : "resume" === action ? "researching" : campaigns[0].status;
+    campaigns[0].status = next;
+    console.log(`ACT ${action}`);
+    return send(res, 200, { id: actionsMatch[1], status: next });
   }
 
   if (req.method === "POST" && path === "/api/v1/campaigns") {

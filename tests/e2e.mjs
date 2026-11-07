@@ -97,6 +97,18 @@ function renderAdmin(extra = "") {
   return wp(...args);
 }
 
+/** Let the fake API's stdout arrive before asserting on the request log. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+/** Put the fake campaign in another state: the screens differ by status. */
+async function setFakeStatus(value) {
+  const response = await fetch(
+    `http://localhost:${FAKE_PORT}/__status?value=${encodeURIComponent(value)}`,
+    { headers: { authorization: "Bearer hh_test_0000000000000000" } },
+  );
+  if (!response.ok) throw new Error(`the fake API refused the status switch: ${response.status}`);
+}
+
 /** Wait until the fake API answers, so the first request is not a connection refused. */
 async function waitForFake(port = FAKE_PORT) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -230,6 +242,109 @@ async function main() {
         dashboard.includes("huggerhustle_approve"),
     );
 
+    // 10. Approve-all is one request, and it reports how many it moved.
+    requested.length = 0;
+    const approvedAll = wpEval(
+      `$c = huggerhustle_client(); $r = $c->approve_all( "c0000000-0000-4000-8000-000000000001" ); echo is_wp_error( $r ) ? "ERR " . $r->get_error_message() : "OK " . $r["approved"];`,
+    );
+    check(
+      "approve-all answers with how many it moved",
+      approvedAll.includes("OK 1"),
+      approvedAll.slice(0, 300),
+    );
+    await settle();
+    const approveAllRequests = requested.filter(
+      (line) => line.startsWith("POST /api/v1/campaigns/") && line.endsWith("/prospects"),
+    );
+    check(
+      "approve-all is one request for the whole page",
+      approveAllRequests.length === 1,
+      requested.join(" | "),
+    );
+
+    // 11. The controls an owner needs are on the screen, each with its nonce.
+    check(
+      "the dashboard offers approve-all",
+      dashboard.includes("huggerhustle_approve_all"),
+    );
+    check(
+      "the dashboard offers the sources form, and says what it drops",
+      dashboard.includes("huggerhustle_sources") &&
+        dashboard.includes("starts the campaign over"),
+      dashboard.slice(0, 600),
+    );
+
+    // 12. A held campaign gets the repair form; a running one gets stop.
+    await setFakeStatus("needs-details");
+    clearCache();
+    const held = renderAdmin();
+    check(
+      "a campaign held on details shows the repair form",
+      held.includes("huggerhustle_details") && held.includes("changes[idealBuyer]"),
+      held.slice(0, 600),
+    );
+
+    await setFakeStatus("researching");
+    clearCache();
+    const running = renderAdmin();
+    check(
+      "a running campaign offers stop and not resume",
+      running.includes('value="stop"') && !running.includes('value="resume"'),
+      running.slice(0, 600),
+    );
+
+    // 13. The three new writes each send one request and answer with a status.
+    const repaired = wpEval(
+      `$c = huggerhustle_client(); $r = $c->update_details( "c0000000-0000-4000-8000-000000000001", array( "geography" => "Austin, TX" ) ); echo is_wp_error( $r ) ? "ERR " . $r->get_error_message() : "OK " . $r["status"];`,
+    );
+    check(
+      "repairing the details answers with the campaign's status",
+      repaired.includes("OK researching"),
+      repaired.slice(0, 300),
+    );
+    await settle();
+    check(
+      "repairing sends only the field that was filled",
+      requested.some((line) => line === 'PATCH {"geography":"Austin, TX"}'),
+      requested.join(" | "),
+    );
+
+    const sourced = wpEval(
+      `$c = huggerhustle_client(); $r = $c->set_sources( "c0000000-0000-4000-8000-000000000001", array( "website" => "https://acme.example", "explanation" => "We restock clinics.", "documents" => array( array( "name" => "About", "content" => "Since 2011." ) ) ) ); echo is_wp_error( $r ) ? "ERR " . $r->get_error_message() : "OK " . $r["status"];`,
+    );
+    check(
+      "saving sources answers researching",
+      sourced.includes("OK researching"),
+      sourced.slice(0, 300),
+    );
+
+    const stopped = wpEval(
+      `$c = huggerhustle_client(); $r = $c->act( "c0000000-0000-4000-8000-000000000001", "stop" ); echo is_wp_error( $r ) ? "ERR " . $r->get_error_message() : "OK " . $r["status"];`,
+    );
+    check(
+      "stopping a running campaign answers paused",
+      stopped.includes("OK paused"),
+      stopped.slice(0, 300),
+    );
+    // The write must invalidate the cached reads: no clearCache() here, and the
+    // screen still has to catch up or the owner sees Stop on a stopped campaign.
+    const afterStop = renderAdmin();
+    check(
+      "a write clears the reads it made wrong",
+      afterStop.includes('value="resume"') && !afterStop.includes('value="stop"'),
+      afterStop.slice(0, 600),
+    );
+
+    check(
+      "a stop the API refuses reaches the screen in its own words",
+      wpEval(
+        `$c = huggerhustle_client(); $r = $c->act( "c0000000-0000-4000-8000-000000000001", "stop" ); echo is_wp_error( $r ) ? $r->get_error_message() : "no error";`,
+      ).includes("Only a running campaign can be stopped"),
+    );
+
+    await setFakeStatus("review");
+    clearCache();
+
     // 9. Starting a campaign sends this site's address, name and page text.
     wp(
       "post",
@@ -250,10 +365,10 @@ async function main() {
       parsed = {};
     }
     const blogname = wp("option", "get", "blogname").trim().split("\n").pop().trim();
-    const siteurl = wp("option", "get", "home").trim().split("\n").pop().trim();
+    const siteurl = wpEval("echo HuggerHustle_Admin::site_url();").trim().split("\n").pop().trim();
     check(
       "the campaign carries this site's address and name",
-      parsed.website === `${siteurl}/` && parsed.businessName === blogname,
+      parsed.website === (siteurl.endsWith("/") ? siteurl : `${siteurl}/`) && parsed.businessName === blogname,
       `got ${JSON.stringify({ website: parsed.website, businessName: parsed.businessName })} wanted ${JSON.stringify({ website: `${siteurl}/`, businessName: blogname })}`,
     );
     const pricing = (parsed.documents ?? []).find((d) => d.name === "Pricing");

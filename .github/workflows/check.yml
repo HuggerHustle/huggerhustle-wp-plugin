@@ -31,10 +31,16 @@ jobs:
       - name: Syntax, then end-to-end
         run: pnpm test
 
+      # The artifact, not the checkout: the checks that matter are the ones the
+      # submitted zip has to pass, and the dev directory is named after the repo
+      # (`huggerhustle-wp-plugin`) while the release slug is `huggerhustle`. Checked
+      # as the checkout, the text-domain rule fails on a name that is not shipped.
       - name: WordPress plugin check
         run: |
           npx wp-env run cli wp plugin install plugin-check --activate
-          npx wp-env run cli wp plugin check huggerhustle-wp-plugin --ignore-codes=readme_parser_warnings
+          pnpm package
+          npx wp-env run cli wp plugin install "wp-content/plugins/$(basename "$GITHUB_WORKSPACE")/dist/huggerhustle.zip" --force
+          npx wp-env run cli wp plugin check huggerhustle --ignore-codes=readme_parser_warnings
 
       - name: Stop WordPress
         if: always()

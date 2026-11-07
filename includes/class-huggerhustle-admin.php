@@ -27,6 +27,12 @@ class HuggerHustle_Admin {
 	/** The API's own ceiling for one document, in characters. */
 	const MAX_DOCUMENT_CHARS = 100000;
 
+	/** The business-detail fields a `PATCH /campaigns/{id}` accepts. */
+	const DETAIL_FIELDS = array( 'businessName', 'whatYouDo', 'currentOffer', 'idealBuyer', 'geography', 'objective', 'meetingEmail' );
+
+	/** The actions the campaign control may send, and nothing else. */
+	const ACTIONS = array( 'stop', 'resume', 'retry', 'continue-anyway' );
+
 	/**
 	 * This site's own address, as the campaign's website.
 	 *
@@ -101,6 +107,7 @@ class HuggerHustle_Admin {
 		} else {
 			self::render_campaigns( $listed, $selected );
 			if ( $selected ) {
+				self::render_controls( $selected );
 				self::render_prospects( $client, $selected );
 			}
 		}
@@ -242,6 +249,24 @@ class HuggerHustle_Admin {
 			return;
 		}
 
+		// One call for the whole page: approving them one by one costs one
+		// request each against the key's 60 a minute.
+		// The campaign's own ready count, not the number on this page: the list is
+		// one page of the campaign, and the button approves the whole campaign.
+		$counts  = isset( $campaign['counts'] ) && is_array( $campaign['counts'] ) ? $campaign['counts'] : array();
+		$ready   = isset( $counts['ready'] ) ? (int) $counts['ready'] : count( $items );
+		$shown   = count( $items );
+		echo '<p>';
+		self::approve_all_form( $campaign_id, $ready );
+		echo ' <span class="description">';
+		printf(
+			/* translators: 1: how many businesses are listed on this page, 2: how many are ready in the campaign. */
+			esc_html__( 'Approves every ready business in this campaign, not only the %1$d listed here (%2$d ready). Read as many introductions as you need first: they all go out with the next batch.', 'huggerhustle' ),
+			(int) $shown,
+			(int) $ready
+		);
+		echo '</span></p>';
+
 		echo '<table class="widefat striped"><thead><tr>';
 		echo '<th>' . esc_html__( 'Business', 'huggerhustle' ) . '</th>';
 		echo '<th>' . esc_html__( 'Why it fits', 'huggerhustle' ) . '</th>';
@@ -319,6 +344,166 @@ class HuggerHustle_Admin {
 	}
 
 	/**
+	 * The controls for the campaign in view.
+	 *
+	 * One button or one small form each, because the API offers each as one
+	 * call: an owner who works in `wp-admin` should not have to open a second
+	 * tab to stop a campaign or repair the details research could not read.
+	 *
+	 * @param array $campaign The campaign in view.
+	 */
+	private static function render_controls( array $campaign ) {
+		$id     = (string) $campaign['id'];
+		$status = isset( $campaign['status'] ) ? (string) $campaign['status'] : '';
+
+		echo '<h2>' . esc_html__( 'This campaign', 'huggerhustle' ) . '</h2>';
+		echo '<p class="huggerhustle-controls">';
+		if ( 'researching' === $status || 'active' === $status ) {
+			self::act_form( $id, 'stop', __( 'Stop this campaign', 'huggerhustle' ) );
+		} elseif ( 'paused' === $status ) {
+			self::act_form( $id, 'resume', __( 'Resume this campaign', 'huggerhustle' ) );
+		} elseif ( 'error' === $status ) {
+			self::act_form( $id, 'retry', __( 'Try again', 'huggerhustle' ) );
+		}
+		echo '</p>';
+
+		if ( 'needs-details' === $status ) {
+			self::details_form( $id );
+		}
+		self::sources_form( $id );
+	}
+
+	/**
+	 * Stop, resume or retry: one POST with a nonce.
+	 *
+	 * @param string $campaign_id Campaign id.
+	 * @param string $do          One of `self::ACTIONS`.
+	 * @param string $label       Button text.
+	 */
+	private static function act_form( $campaign_id, $do, $label ) {
+		?>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-block;margin-right:8px">
+			<?php wp_nonce_field( 'huggerhustle_act' ); ?>
+			<input type="hidden" name="action" value="huggerhustle_act" />
+			<input type="hidden" name="campaign" value="<?php echo esc_attr( $campaign_id ); ?>" />
+			<input type="hidden" name="do" value="<?php echo esc_attr( $do ); ?>" />
+			<button type="submit" class="button"><?php echo esc_html( $label ); ?></button>
+		</form>
+		<?php
+	}
+
+	/**
+	 * The form that repairs a campaign held at `needs-details`.
+	 *
+	 * Every field is optional and only what is filled is sent: the API merges
+	 * over what it already stores, so a blank input keeps the saved value
+	 * instead of wiping it. The name starts from this site's title because
+	 * sending is refused until a business name is set, and that is the one
+	 * value WordPress already knows.
+	 *
+	 * @param string $campaign_id Campaign id.
+	 */
+	private static function details_form( $campaign_id ) {
+		$fields = array(
+			'businessName' => array( __( 'Your business name', 'huggerhustle' ), (string) get_bloginfo( 'name' ) ),
+			'whatYouDo'    => array( __( 'What you do, in one line', 'huggerhustle' ), '' ),
+			'idealBuyer'   => array( __( 'Who pays you: one kind of business', 'huggerhustle' ), '' ),
+			'currentOffer' => array( __( 'What you offer today', 'huggerhustle' ), '' ),
+			'geography'    => array( __( 'Where you work', 'huggerhustle' ), '' ),
+			'objective'    => array( __( 'The work you want more of', 'huggerhustle' ), '' ),
+			'meetingEmail' => array( __( 'Where a meeting invitation should go', 'huggerhustle' ), '' ),
+		);
+		?>
+		<h3><?php esc_html_e( 'What research could not read', 'huggerhustle' ); ?></h3>
+		<p><?php esc_html_e( 'Fill what you can and leave the rest blank: anything already saved is kept, and saving reads your business again with these details.', 'huggerhustle' ); ?></p>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+			<?php wp_nonce_field( 'huggerhustle_details' ); ?>
+			<input type="hidden" name="action" value="huggerhustle_details" />
+			<input type="hidden" name="campaign" value="<?php echo esc_attr( $campaign_id ); ?>" />
+			<table class="form-table" role="presentation"><tbody>
+			<?php foreach ( $fields as $name => $field ) : ?>
+				<tr>
+					<th scope="row"><label for="<?php echo esc_attr( 'hh_' . $name ); ?>"><?php echo esc_html( $field[0] ); ?></label></th>
+					<td><input class="regular-text" type="text" id="<?php echo esc_attr( 'hh_' . $name ); ?>" name="<?php echo esc_attr( 'changes[' . $name . ']' ); ?>" value="<?php echo esc_attr( $field[1] ); ?>" /></td>
+				</tr>
+			<?php endforeach; ?>
+			</tbody></table>
+			<?php submit_button( __( 'Save and read again', 'huggerhustle' ), 'primary', 'submit', false ); ?>
+		</form>
+		<?php
+	}
+
+	/**
+	 * The form that replaces what a campaign reads.
+	 *
+	 * Behind a disclosure, and it says what it destroys before the button: the
+	 * API drops every business not yet sent and starts research over, which is
+	 * too much to do by accident.
+	 *
+	 * @param string $campaign_id Campaign id.
+	 */
+	private static function sources_form( $campaign_id ) {
+		?>
+		<details class="huggerhustle-sources" style="margin:12px 0">
+			<summary><?php esc_html_e( 'Change what this campaign reads', 'huggerhustle' ); ?></summary>
+			<p><strong><?php esc_html_e( 'This starts the campaign over.', 'huggerhustle' ); ?></strong>
+				<?php esc_html_e( 'Every business it found and you have not approved is dropped, and research reads your business again. Businesses already approved or sent stay.', 'huggerhustle' ); ?></p>
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+				<?php wp_nonce_field( 'huggerhustle_sources' ); ?>
+				<input type="hidden" name="action" value="huggerhustle_sources" />
+				<input type="hidden" name="campaign" value="<?php echo esc_attr( $campaign_id ); ?>" />
+				<table class="form-table" role="presentation"><tbody>
+					<tr>
+						<th scope="row"><label for="hh_sources_website"><?php esc_html_e( 'Website', 'huggerhustle' ); ?></label></th>
+						<td><input class="regular-text" type="url" id="hh_sources_website" name="website" value="<?php echo esc_attr( self::site_url() ); ?>" /></td>
+					</tr>
+					<tr>
+						<th scope="row"><label for="hh_sources_explanation"><?php esc_html_e( 'What you sell, in your own words', 'huggerhustle' ); ?></label></th>
+						<td><textarea class="large-text" rows="4" id="hh_sources_explanation" name="explanation"></textarea></td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'This site\'s pages', 'huggerhustle' ); ?></th>
+						<td><label><input type="checkbox" name="send_pages" value="1" checked="checked" />
+							<?php
+							printf(
+								/* translators: %d: how many pages are sent. */
+								esc_html__( 'Send up to %d of this site\'s published pages with it', 'huggerhustle' ),
+								(int) self::MAX_PAGES
+							);
+							?>
+						</label></td>
+					</tr>
+				</tbody></table>
+				<?php submit_button( __( 'Use these sources', 'huggerhustle' ), 'secondary', 'submit', false ); ?>
+			</form>
+		</details>
+		<?php
+	}
+
+	/**
+	 * Approve every listed business: one POST, one request.
+	 *
+	 * @param string $campaign_id Campaign id.
+	 * @param int    $count       How many are ready.
+	 */
+	private static function approve_all_form( $campaign_id, $count ) {
+		?>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-block">
+			<?php wp_nonce_field( 'huggerhustle_approve_all' ); ?>
+			<input type="hidden" name="action" value="huggerhustle_approve_all" />
+			<input type="hidden" name="campaign" value="<?php echo esc_attr( $campaign_id ); ?>" />
+			<button type="submit" class="button"><?php
+				printf(
+					/* translators: %d: how many businesses are ready. */
+					esc_html( _n( 'Approve all %d ready business', 'Approve all %d ready businesses', (int) $count, 'huggerhustle' ) ),
+					(int) $count
+				);
+			?></button>
+		</form>
+		<?php
+	}
+
+	/**
 	 * Start a campaign from this site: its address, its name, and its pages.
 	 *
 	 * The pages are sent as documents because HuggerHustle reads what the owner
@@ -387,6 +572,127 @@ class HuggerHustle_Admin {
 			self::redirect( $campaign, $result->get_error_message() );
 		}
 		self::redirect( $campaign, __( 'Approved. It goes out with the next batch.', 'huggerhustle' ) );
+	}
+
+	/** Approve every business that is ready, in one request. */
+	public static function handle_approve_all() {
+		self::require_capability();
+		check_admin_referer( 'huggerhustle_approve_all' );
+		$campaign = isset( $_POST['campaign'] ) ? sanitize_text_field( wp_unslash( $_POST['campaign'] ) ) : '';
+
+		$result = huggerhustle_client()->approve_all( $campaign );
+		if ( is_wp_error( $result ) ) {
+			self::redirect( $campaign, $result->get_error_message() );
+		}
+
+		$count = isset( $result['approved'] ) ? (int) $result['approved'] : 0;
+		if ( $count < 1 ) {
+			self::redirect( $campaign, __( 'Nothing was ready to approve.', 'huggerhustle' ) );
+		}
+		self::redirect(
+			$campaign,
+			sprintf(
+				/* translators: %d: how many businesses were approved. */
+				_n( '%d business approved. It goes out with the next batch.', '%d businesses approved. They go out with the next batch.', $count, 'huggerhustle' ),
+				$count
+			)
+		);
+	}
+
+	/**
+	 * Repair a campaign held on missing details.
+	 *
+	 * Only the filled inputs are sent: the API merges them over what it stores,
+	 * so leaving a field blank keeps the saved value rather than clearing it.
+	 */
+	public static function handle_details() {
+		self::require_capability();
+		check_admin_referer( 'huggerhustle_details' );
+		$campaign = isset( $_POST['campaign'] ) ? sanitize_text_field( wp_unslash( $_POST['campaign'] ) ) : '';
+		// Sanitised on the way in, then only the fields the API knows are kept:
+		// an unknown key would be a 422 the owner cannot do anything about.
+		$posted = isset( $_POST['changes'] ) && is_array( $_POST['changes'] )
+			? array_map( 'sanitize_text_field', wp_unslash( $_POST['changes'] ) )
+			: array();
+
+		$changes = array();
+		foreach ( self::DETAIL_FIELDS as $field ) {
+			$value = isset( $posted[ $field ] ) && is_string( $posted[ $field ] ) ? trim( $posted[ $field ] ) : '';
+			if ( '' !== $value ) {
+				$changes[ $field ] = $value;
+			}
+		}
+
+		if ( empty( $changes ) ) {
+			self::redirect( $campaign, __( 'Nothing was filled in, so nothing changed.', 'huggerhustle' ) );
+		}
+
+		if ( isset( $changes['meetingEmail'] ) ) {
+			$email = sanitize_email( $changes['meetingEmail'] );
+			if ( ! is_email( $email ) ) {
+				self::redirect( $campaign, __( 'That meeting email is not a valid address.', 'huggerhustle' ) );
+			}
+			$changes['meetingEmail'] = $email;
+		}
+
+		$result = huggerhustle_client()->update_details( $campaign, $changes );
+		if ( is_wp_error( $result ) ) {
+			self::redirect( $campaign, $result->get_error_message() );
+		}
+		self::redirect( $campaign, __( 'Saved. We read your business again with these details.', 'huggerhustle' ) );
+	}
+
+	/** Replace what a campaign reads: its website, its description, its pages. */
+	public static function handle_sources() {
+		self::require_capability();
+		check_admin_referer( 'huggerhustle_sources' );
+		$campaign = isset( $_POST['campaign'] ) ? sanitize_text_field( wp_unslash( $_POST['campaign'] ) ) : '';
+
+		$posted      = isset( $_POST['website'] ) ? esc_url_raw( sanitize_url( wp_unslash( $_POST['website'] ) ) ) : '';
+		$explanation = isset( $_POST['explanation'] ) ? sanitize_textarea_field( wp_unslash( $_POST['explanation'] ) ) : '';
+		$send_pages  = ! empty( $_POST['send_pages'] );
+
+		// A website the owner cleared is sent cleared: the form already prefills
+		// this site's address, so an empty input means "no website", and putting
+		// it back here would make a description-only reset impossible.
+		$result = huggerhustle_client()->set_sources(
+			$campaign,
+			array(
+				'website'     => $posted,
+				'explanation' => $explanation,
+				'documents'   => $send_pages ? self::published_pages() : array(),
+			)
+		);
+		if ( is_wp_error( $result ) ) {
+			self::redirect( $campaign, $result->get_error_message() );
+		}
+		self::redirect( $campaign, __( 'Sources saved. Research starts over with them.', 'huggerhustle' ) );
+	}
+
+	/** Stop, resume or retry the campaign in view. */
+	public static function handle_act() {
+		self::require_capability();
+		check_admin_referer( 'huggerhustle_act' );
+		$campaign = isset( $_POST['campaign'] ) ? sanitize_text_field( wp_unslash( $_POST['campaign'] ) ) : '';
+		$do       = isset( $_POST['do'] ) ? sanitize_text_field( wp_unslash( $_POST['do'] ) ) : '';
+
+		if ( ! in_array( $do, self::ACTIONS, true ) ) {
+			self::redirect( $campaign, __( 'That is not something this screen does.', 'huggerhustle' ) );
+		}
+
+		$result = huggerhustle_client()->act( $campaign, $do );
+		if ( is_wp_error( $result ) ) {
+			self::redirect( $campaign, $result->get_error_message() );
+		}
+		$status = isset( $result['status'] ) ? (string) $result['status'] : '';
+		self::redirect(
+			$campaign,
+			sprintf(
+				/* translators: %s: the campaign's new status, e.g. "paused". */
+				__( 'The campaign is now %s.', 'huggerhustle' ),
+				$status
+			)
+		);
 	}
 
 	/** Capability, or die. The nonce is checked inline by each handler. */
